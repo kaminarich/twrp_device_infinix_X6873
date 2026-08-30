@@ -272,3 +272,20 @@ jobs:
           path: upload/**
           if-no-files-found: warn
           retention-days: 30
+
+      # ------------------------------------------------------------ telegram
+      # Sends the build report to Telegram. Uses repository variables TG_BOT
+      # (bot token) and TG_CHAT (chat id) — both optional; the step is skipped
+      # entirely when they are not configured. The token is never printed and
+      # never appears in a URL that gets logged.
+      - name: Report to Telegram
+        if: always()
+        env:
+          TG_BOT: ${{ secrets.TG_BOT || vars.TG_BOT }}
+          TG_CHAT: ${{ secrets.TG_CHAT || vars.TG_CHAT }}
+        run: |
+          if [ -z "$TG_BOT" ] || [ -z "$TG_CHAT" ]; then
+            echo "TG_BOT / TG_CHAT not configured; skipping Telegram report."
+            exit 0
+          fi
+          bash "$GITHUB_WORKSPACE/device_tree/tools/tg_report.sh"

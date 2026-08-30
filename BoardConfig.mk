@@ -52,7 +52,11 @@ BOARD_KERNEL_SEPARATED_DTBO := true
 
 BOARD_BOOT_HEADER_VERSION := 4
 BOARD_KERNEL_PAGESIZE := 4096
-BOARD_HEADER_SIZE := 2128
+# Stock vendor_boot header_size is 2128. BOARD_HEADER_SIZE is not read by the
+# AOSP/TWRP build system (verified: no reference in core/Makefile or
+# board_config.mk) — mkbootimg derives it from --header_version. Recorded here
+# as measured documentation only.
+# BOARD_HEADER_SIZE := 2128
 
 # Load addresses.
 #
@@ -83,7 +87,10 @@ BOARD_DTB_OFFSET := 0x07c88000
 # vendor policy is loaded from the ramdisk, and forcing permissive changes
 # first-stage init behaviour instead of fixing anything.
 BOARD_KERNEL_CMDLINE := bootopt=64S3,32N2,64N2
-BOARD_VENDOR_CMDLINE := $(BOARD_KERNEL_CMDLINE)
+# BOARD_VENDOR_CMDLINE is not an AOSP/TWRP build variable (verified: no
+# reference in core/Makefile or board_config.mk). The vendor_boot cmdline comes
+# from BOARD_KERNEL_CMDLINE via INTERNAL_KERNEL_CMDLINE, so setting it would be
+# dead config. Not set.
 
 # DTB: the stock MT6897 DTB, byte-identical, taken from stock vendor_boot.
 # It carries the MediaTek DT wrapper header (magic 1eabb7d7) the bootloader
@@ -97,6 +104,15 @@ BOARD_VENDOR_CMDLINE := $(BOARD_KERNEL_CMDLINE)
 BOARD_PREBUILT_DTBIMAGE_DIR := $(DEVICE_PATH)/prebuilt/dtb
 BOARD_INCLUDE_DTB_IN_BOOTIMG := true
 
+# NOTE ON CMDLINE DUPLICATION
+# INTERNAL_VENDOR_BOOTIMAGE_ARGS already passes
+#   --vendor_cmdline "$(INTERNAL_KERNEL_CMDLINE)"
+# where INTERNAL_KERNEL_CMDLINE = BOARD_KERNEL_CMDLINE + " buildvariant=eng"
+# (core/Makefile:909, board_config.mk:229). We deliberately do NOT add another
+# --vendor_cmdline: mkbootimg would take the last one and we would lose the
+# build-system value. The extra "buildvariant=eng" token differs from stock but
+# is harmless — the bootloader only consumes bootopt=, and stock TWRP trees
+# carry the same token.
 BOARD_MKBOOTIMG_ARGS += --base $(BOARD_KERNEL_BASE)
 BOARD_MKBOOTIMG_ARGS += --pagesize $(BOARD_KERNEL_PAGESIZE)
 BOARD_MKBOOTIMG_ARGS += --kernel_offset $(BOARD_KERNEL_OFFSET)
@@ -105,7 +121,6 @@ BOARD_MKBOOTIMG_ARGS += --tags_offset $(BOARD_KERNEL_TAGS_OFFSET)
 BOARD_MKBOOTIMG_ARGS += --dtb_offset $(BOARD_DTB_OFFSET)
 BOARD_MKBOOTIMG_ARGS += --header_version $(BOARD_BOOT_HEADER_VERSION)
 BOARD_MKBOOTIMG_ARGS += --board ""
-BOARD_MKBOOTIMG_ARGS += --vendor_cmdline $(BOARD_VENDOR_CMDLINE)
 
 # -------------------------------------------------------------- partitions
 BOARD_FLASH_BLOCK_SIZE := 262144
@@ -121,6 +136,35 @@ TARGET_USERIMAGES_USE_EXT4 := true
 TARGET_USERIMAGES_USE_F2FS := true
 TARGET_USES_MKE2FS := true
 BOARD_USERDATAIMAGE_FILE_SYSTEM_TYPE := f2fs
+
+# ===========================================================================
+# ROOT CAUSE FIX FOR RUN #7 — the rsync "root/vendor" collision
+#
+# Run #7 reached 20263/20265 and failed with:
+#     could not make way for new symlink: root/vendor
+#     cannot delete non-empty directory: root/vendor
+#
+# Without this variable, envsetup.mk leaves TARGET_COPY_OUT_VENDOR as a
+# placeholder that board_config.mk:561 resolves to "system/vendor". The
+# baseline ramdisk then contains root/vendor as a SYMLINK to /system/vendor.
+# Anything installing into vendor/ inside the recovery ramdisk (the
+# android.hardware.boot@1.1.xml / @1.2.xml VINTF fragments that
+# AB_OTA_UPDATER := true pulls in via TWRP_REQUIRED_MODULES, plus any
+# .recovery HAL) turns recovery/root/vendor into a real non-empty directory,
+# and the recovery packaging rsync cannot overwrite a non-empty directory with
+# a symlink -> exit 23.
+#
+# This device HAS a real vendor partition, so "vendor" is also the correct
+# value. board_config.mk:577 then sets BOARD_USES_VENDORIMAGE := true, which is
+# harmless here: BUILDING_VENDOR_IMAGE additionally requires
+# BOARD_VENDORIMAGE_FILE_SYSTEM_TYPE, which is deliberately not set, so no
+# vendor.img is built.
+#
+# This is exactly what the booting duchamp TWRP tree does (it sets
+# TARGET_COPY_OUT_VENDOR := vendor and therefore never hits this collision,
+# even while installing the same boot/health HALs).
+# ===========================================================================
+TARGET_COPY_OUT_VENDOR := vendor
 
 # ---------------------------------------------------------------- recovery
 # There is NO dedicated recovery partition. Recovery lives in vendor_boot as
@@ -175,6 +219,10 @@ TARGET_SCREEN_DENSITY := 480
 TW_THEME := portrait_hdpi
 TW_FRAMERATE := 60
 TW_NO_SCREEN_BLANK := true
+# Backlight. Verified against the stock module set: leds-mtk.ko exports the
+# node name "lcd-backlight" and contains both "max_brightness" and the literal
+# 2047, so the range is 0-2047. Every MediaTek reference tree checked uses the
+# same path.
 TW_BRIGHTNESS_PATH := "/sys/class/leds/lcd-backlight/brightness"
 TW_MAX_BRIGHTNESS := 2047
 TW_DEFAULT_BRIGHTNESS := 1200
@@ -188,21 +236,26 @@ TW_USB_STORAGE := true
 # FBE with metadata encryption, aes-256-xts:aes-256-cts:v2, F2FS userdata.
 TW_INCLUDE_CRYPTO := true
 TW_INCLUDE_CRYPTO_FBE := true
-TW_INCLUDE_FBE_METADATA_DECRYPT := true
-TW_USE_FSCRYPT_POLICY := 2
 TW_INCLUDE_LIBRESETPROP := true
 TW_INCLUDE_RESETPROP := true
+# TW_INCLUDE_FBE_METADATA_DECRYPT is NOT set: bootable/recovery/Android.mk:358
+# adds -DTW_INCLUDE_FBE_METADATA_DECRYPT unconditionally inside the
+# TW_INCLUDE_CRYPTO block, so setting it here would be dead config.
+# TW_USE_FSCRYPT_POLICY is NOT set: no consumer in TWRP 12.1's Android.mk.
+# Both were verified by grepping the actual bootable/recovery source.
 
 # ------------------------------------------------------------------- misc
-TW_HAS_NO_RECOVERY_PARTITION := true
 TW_INCLUDE_FASTBOOTD := true
 TW_INCLUDE_REPACKTOOLS := true
 TW_INCLUDE_NTFS_3G := true
 TW_EXTRA_LANGUAGES := true
-TW_HAS_NO_SELECT_BUTTON := true
-BOARD_SUPPRESS_SECURE_ERASE := true
 TARGET_USES_LOGD := true
 TWRP_INCLUDE_LOGCAT := true
+# Not set, no consumer found in TWRP 12.1 source (verified against
+# bootable/recovery/Android.mk and the soong EXPORT_TO_SOONG list):
+#   TW_HAS_NO_RECOVERY_PARTITION, TW_HAS_NO_SELECT_BUTTON, TW_USB_STORAGE,
+#   BOARD_SUPPRESS_SECURE_ERASE
+# They are inert rather than harmful, but dead config hides real problems.
 
 # lptools can resize and delete logical partitions from the GUI. On a device
 # whose super layout we have not fully verified, that is a data-loss risk.
@@ -235,6 +288,19 @@ RECOVERY_KERNEL_MODULES := \
 BOARD_VENDOR_RAMDISK_KERNEL_MODULES := \
     $(sort $(BOARD_VENDOR_RAMDISK_KERNEL_MODULES) $(RECOVERY_KERNEL_MODULES))
 
+# TWRP module loading.
+#
+# TW_LOAD_VENDOR_BOOT_MODULES is NESTED inside "ifneq ($(TW_LOAD_VENDOR_MODULES),)"
+# in bootable/recovery/Android.mk:323-334. Setting it alone is DEAD CONFIG:
+# without TW_LOAD_VENDOR_MODULES, kernel_module_loader.cpp is not even compiled
+# into recovery, so TWRP loads no modules at all and the touchscreen stays dead
+# no matter how many modules the ramdisk carries.
+#
+# TW_LOAD_VENDOR_MODULES is a quoted list of module filenames TWRP insmods
+# itself. The display stack comes up from the stock PLATFORM fragment's
+# modules.load.recovery, so what TWRP must load here are the four modules added
+# from stock odm_dlkm for input and haptics.
+TW_LOAD_VENDOR_MODULES := "focaltech_ft3683g.ko adaptive-ts.ko haptic_drv_hv.ko aw86224_light.ko"
 TW_LOAD_VENDOR_BOOT_MODULES := true
 
 TW_DEVICE_VERSION := X6873-brick-safe-1
