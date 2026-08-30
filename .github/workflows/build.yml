@@ -127,7 +127,7 @@ jobs:
             grep -n "TW_THEME\|TARGET_SCREEN_WIDTH\|TARGET_SCREEN_HEIGHT" device/infinix/X6873/BoardConfig.mk
             echo
             echo "### what kati resolves"
-            for v in TARGET_DEVICE TARGET_DEVICE_DIR TW_THEME TARGET_SCREEN_WIDTH TARGET_SCREEN_HEIGHT TARGET_RECOVERY_PIXEL_FORMAT PLATFORM_VERSION; do
+            for v in TARGET_PRODUCT INTERNAL_PRODUCT TARGET_DEVICE TARGET_DEVICE_DIR TW_THEME TARGET_SCREEN_WIDTH TARGET_SCREEN_HEIGHT TARGET_RECOVERY_PIXEL_FORMAT PLATFORM_VERSION; do
               printf '%-32s = %s\n' "$v" "$(get_build_var $v 2>/dev/null)"
             done
             echo
@@ -147,14 +147,26 @@ jobs:
           set +e
           export ALLOW_MISSING_DEPENDENCIES=true
           export LC_ALL=C
-          # Belt and braces for the run #1 theme failure: these are also set in
-          # BoardConfig.mk, and make imports the environment, so whichever path
-          # BoardConfigSoong.mk reads, the value is present.
-          export TW_THEME=portrait_hdpi
-          export TARGET_SCREEN_WIDTH=1224
-          export TARGET_SCREEN_HEIGHT=2720
           source build/envsetup.sh
-          lunch twrp_X6873-eng 2>&1 | tee $HOME/lunch.log
+
+          # lunch MUST NOT run in a pipeline. It is a shell function that
+          # exports TARGET_PRODUCT; a pipeline runs it in a subshell, so the
+          # banner prints but the exports are discarded and the following build
+          # silently falls back to aosp_arm-eng. That was the real cause of
+          # runs #1-#4: the theme failure and the generic_system artifact path
+          # requirement were both symptoms of building the wrong product.
+          # Use redirection, never a pipe.
+          lunch twrp_X6873-eng > $HOME/lunch.log 2>&1
+          cat $HOME/lunch.log
+
+          # Refuse to build the wrong product.
+          echo "TARGET_PRODUCT=${TARGET_PRODUCT:-<unset>}"
+          echo "TARGET_DEVICE=${TARGET_DEVICE:-<unset>}"
+          if [ "$TARGET_PRODUCT" != "twrp_X6873" ]; then
+            echo "::error::lunch did not take effect (TARGET_PRODUCT='${TARGET_PRODUCT}'). Refusing to build."
+            exit 1
+          fi
+
           mka ${{ inputs.build_target }} -j$(nproc --all) 2>&1 | tee $HOME/build.log
           echo "rc=${PIPESTATUS[0]}" >> $GITHUB_OUTPUT
           exit 0
