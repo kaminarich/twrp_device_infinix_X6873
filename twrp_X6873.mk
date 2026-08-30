@@ -6,12 +6,24 @@
 #
 
 # Inherit from those products. Most specific first.
-# core_64_bit_only: the device has no 32-bit ABI at all.
-$(call inherit-product, $(SRC_TARGET_DIR)/product/core_64_bit_only.mk)
-$(call inherit-product, $(SRC_TARGET_DIR)/product/base.mk)
+#
+# core_64_bit.mk, not core_64_bit_only.mk: TWRP 12.1 still builds some 32-bit
+# recovery libraries, and the "only" variant conflicts with that. The device is
+# 64-bit only for Android, which is expressed in BoardConfig.mk instead.
+#
+# base.mk is deliberately NOT inherited: it pulls in the generic_system.mk
+# artifact path requirements, and a recovery build installs TWRP binaries into
+# system/, which then fails artifact_path_requirements.mk. full_base_telephony
+# is what the working X6873 and duchamp TWRP trees use.
+$(call inherit-product, $(SRC_TARGET_DIR)/product/core_64_bit.mk)
+$(call inherit-product, $(SRC_TARGET_DIR)/product/full_base_telephony.mk)
 
 # Enable project quotas and casefolding for emulated storage without sdcardfs
 $(call inherit-product, $(SRC_TARGET_DIR)/product/emulated_storage.mk)
+
+# A recovery image is not a GSI-compliant system image, so the artifact path
+# requirements inherited from the AOSP product chain do not apply.
+PRODUCT_ENFORCE_ARTIFACT_PATH_REQUIREMENTS := false
 
 # NOTE: gsi_keys.mk is deliberately NOT inherited. Installing GSI AVB keys
 # into a ramdisk for a device whose vbmeta we do not resign makes
