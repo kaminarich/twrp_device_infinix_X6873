@@ -110,6 +110,18 @@ jobs:
             "$GITHUB_WORKSPACE/device_tree/" /mnt/twrp/device/infinix/X6873/
           ls -la /mnt/twrp/device/infinix/X6873
 
+      # The prebuilt kernel repo supplies the stock vendor_boot modules that
+      # populate the PLATFORM fragment. It must sit at $(DEVICE_PATH)-kernel,
+      # never at kernel/infinix/X6873, which is LineageOS/TWRP's auto-kdir.
+      - name: Sync prebuilt kernel and modules
+        run: |
+          git clone --depth=1 -b lineage-24.0 \
+            https://github.com/kaminarich/android_kernel_infinix_X6873.git \
+            /mnt/twrp/device/infinix/X6873-kernel
+          echo "modules: $(ls /mnt/twrp/device/infinix/X6873-kernel/modules/*.ko | wc -l)"
+          wc -l /mnt/twrp/device/infinix/X6873-kernel/modules/vendor_ramdisk.modules.load \
+                /mnt/twrp/device/infinix/X6873-kernel/modules/vendor_ramdisk.modules.load.recovery
+
       # ------------------------------------------------------- diagnostics
       # Run #1 failed with "Could not find ui.xml for TW_THEME: not set" even
       # though BoardConfig.mk sets TW_THEME. TWRP forwards TW_* into the soong

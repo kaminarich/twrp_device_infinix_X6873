@@ -48,18 +48,3 @@ PRODUCT_PACKAGES += \
 PRODUCT_COPY_FILES += \
     $(LOCAL_PATH)/recovery/root/init.recovery.mt6897.rc:$(TARGET_COPY_OUT_RECOVERY)/root/init.recovery.mt6897.rc \
     $(LOCAL_PATH)/recovery/root/first_stage_ramdisk/fstab.mt6897:$(TARGET_COPY_OUT_RECOVERY)/root/first_stage_ramdisk/fstab.mt6897
-
-# Touch and haptics modules.
-#
-# The stock PLATFORM vendor ramdisk has NO touch driver: at normal boot touch
-# comes from odm_dlkm once super is mounted. Because the RECOVERY fragment is
-# overlaid on top of PLATFORM at recovery boot, adding these four here gives
-# recovery a working touchscreen while leaving normal boot untouched.
-# All four report vermagic 6.1.145-android14-11-gbd2a8237408e, the same kernel
-# build as the stock vendor_boot modules.
-PRODUCT_COPY_FILES += \
-    $(LOCAL_PATH)/recovery/root/lib/modules/focaltech_ft3683g.ko:$(TARGET_COPY_OUT_RECOVERY)/root/lib/modules/focaltech_ft3683g.ko \
-    $(LOCAL_PATH)/recovery/root/lib/modules/adaptive-ts.ko:$(TARGET_COPY_OUT_RECOVERY)/root/lib/modules/adaptive-ts.ko \
-    $(LOCAL_PATH)/recovery/root/lib/modules/haptic_drv_hv.ko:$(TARGET_COPY_OUT_RECOVERY)/root/lib/modules/haptic_drv_hv.ko \
-    $(LOCAL_PATH)/recovery/root/lib/modules/aw86224_light.ko:$(TARGET_COPY_OUT_RECOVERY)/root/lib/modules/aw86224_light.ko \
-    $(LOCAL_PATH)/recovery/root/lib/modules/modules.load.recovery:$(TARGET_COPY_OUT_RECOVERY)/root/lib/modules/modules.load.recovery

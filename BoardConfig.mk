@@ -209,9 +209,32 @@ TWRP_INCLUDE_LOGCAT := true
 TW_EXCLUDE_LPTOOLS := true
 TW_EXCLUDE_APEX := true
 
-# Kernel modules for the recovery ramdisk are supplied by the workflow, which
-# extracts them from the stock vendor_boot image at build time. See
-# tools/ and docs/ in this repository.
+# ---------------------------------------------------------------- modules
+# The prebuilt kernel repository is synced to $(DEVICE_PATH)-kernel by the
+# workflow. It holds the 241 stock vendor_boot modules plus 4 taken from stock
+# odm_dlkm for touch and haptics in recovery.
+#
+# Run #6 failed partly because nothing populated the vendor ramdisk:
+#   error: cannot open directory 'out/target/product/X6873/vendor_ramdisk'
+# With BOARD_MOVE_RECOVERY_RESOURCES_TO_VENDOR_BOOT plus
+# BOARD_INCLUDE_RECOVERY_RAMDISK_IN_VENDOR_BOOT, the PLATFORM fragment must be
+# populated explicitly or it ships empty -- which is exactly the defect in the
+# idabgsram, XTENSEI and naden X6873 trees. This wiring follows
+# transsion-graveyard's Tecno CM6 tree.
+KERNEL_PATH := $(DEVICE_PATH)-kernel
+
+BOARD_VENDOR_RAMDISK_KERNEL_MODULES_LOAD := \
+    $(strip $(shell cat $(KERNEL_PATH)/modules/vendor_ramdisk.modules.load))
+BOARD_VENDOR_RAMDISK_KERNEL_MODULES := \
+    $(addprefix $(KERNEL_PATH)/modules/,$(BOARD_VENDOR_RAMDISK_KERNEL_MODULES_LOAD))
+
+BOARD_VENDOR_RAMDISK_RECOVERY_KERNEL_MODULES_LOAD := \
+    $(strip $(shell cat $(KERNEL_PATH)/modules/vendor_ramdisk.modules.load.recovery))
+RECOVERY_KERNEL_MODULES := \
+    $(addprefix $(KERNEL_PATH)/modules/,$(BOARD_VENDOR_RAMDISK_RECOVERY_KERNEL_MODULES_LOAD))
+BOARD_VENDOR_RAMDISK_KERNEL_MODULES := \
+    $(sort $(BOARD_VENDOR_RAMDISK_KERNEL_MODULES) $(RECOVERY_KERNEL_MODULES))
+
 TW_LOAD_VENDOR_BOOT_MODULES := true
 
 TW_DEVICE_VERSION := X6873-brick-safe-1

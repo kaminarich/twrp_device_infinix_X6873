@@ -20,10 +20,23 @@
 # runs whenever that variable is non-empty, so even ":= false" enables it
 # (artifact_path_requirements.mk line 49: "$(if $(enforcement),...)").
 #
-# So the requirement is never introduced in the first place. This is the same
-# minimal inheritance the idabgsram X6873 tree uses: TWRP's own package set
-# plus the device, nothing from the AOSP system-image products.
+# CORRECTION (run #6): the artifact path requirement was NOT caused by
+# base.mk. It came from building the wrong product entirely -- lunch ran in a
+# pipeline, so every build fell back to aosp_arm, which inherits
+# generic_system.mk and calls require-artifacts-in-path. Verified that none of
+# full_base_telephony -> full_base -> generic_no_telephony -> base.mk calls it.
+#
+# Minimal inheritance then caused a different failure: nothing populated
+# $(TARGET_ROOT_OUT), and the recovery packaging rule rsyncs
+# out/target/product/X6873/root into .../recovery, which failed with
+# "No such file or directory".
+#
+# This is the inheritance hoshiyomiX's X6873 tree uses -- that tree's only real
+# defect was its load addresses, so its product setup is sound.
+# gsi_keys.mk is still deliberately excluded (see BoardConfig.mk).
 $(call inherit-product, $(SRC_TARGET_DIR)/product/core_64_bit.mk)
+$(call inherit-product, $(SRC_TARGET_DIR)/product/full_base_telephony.mk)
+$(call inherit-product, $(SRC_TARGET_DIR)/product/emulated_storage.mk)
 
 # Inherit from the device
 $(call inherit-product, device/infinix/X6873/device.mk)
