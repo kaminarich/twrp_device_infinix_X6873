@@ -110,6 +110,35 @@ jobs:
             "$GITHUB_WORKSPACE/device_tree/" /mnt/twrp/device/infinix/X6873/
           ls -la /mnt/twrp/device/infinix/X6873
 
+      # ------------------------------------------------------- diagnostics
+      # Run #1 failed with "Could not find ui.xml for TW_THEME: not set" even
+      # though BoardConfig.mk sets TW_THEME. TWRP forwards TW_* into the soong
+      # namespace twrpVarsPlugin via vendor/twrp/config/BoardConfigSoong.mk,
+      # so prove whether kati sees the variable at all.
+      - name: Diagnose device config
+        run: |
+          cd /mnt/twrp
+          set +e
+          source build/envsetup.sh >/dev/null 2>&1
+          lunch twrp_X6873-eng >/dev/null 2>&1
+          {
+            echo "### device tree present?"
+            ls -la device/infinix/X6873/BoardConfig.mk
+            grep -n "TW_THEME\|TARGET_SCREEN_WIDTH\|TARGET_SCREEN_HEIGHT" device/infinix/X6873/BoardConfig.mk
+            echo
+            echo "### what kati resolves"
+            for v in TARGET_DEVICE TARGET_DEVICE_DIR TW_THEME TARGET_SCREEN_WIDTH TARGET_SCREEN_HEIGHT TARGET_RECOVERY_PIXEL_FORMAT PLATFORM_VERSION; do
+              printf '%-32s = %s\n' "$v" "$(get_build_var $v 2>/dev/null)"
+            done
+            echo
+            echo "### vendor/twrp present?"
+            ls -la vendor/twrp/config/BoardConfigSoong.mk vendor/twrp/config/BoardConfigTWRP.mk 2>&1
+            echo
+            echo "### soong.variables twrp namespace"
+            grep -iA6 '"twrpVarsPlugin"' out/soong/soong.variables 2>/dev/null | head -30 || echo "(no soong.variables yet)"
+          } 2>&1 | tee $HOME/config-debug.log
+          cat $HOME/config-debug.log >> $GITHUB_STEP_SUMMARY
+
       # ------------------------------------------------------------- build
       - name: Build
         id: build
@@ -118,9 +147,15 @@ jobs:
           set +e
           export ALLOW_MISSING_DEPENDENCIES=true
           export LC_ALL=C
+          # Belt and braces for the run #1 theme failure: these are also set in
+          # BoardConfig.mk, and make imports the environment, so whichever path
+          # BoardConfigSoong.mk reads, the value is present.
+          export TW_THEME=portrait_hdpi
+          export TARGET_SCREEN_WIDTH=1224
+          export TARGET_SCREEN_HEIGHT=2720
           source build/envsetup.sh
-          lunch twrp_X6873-eng 2>&1 | tee /mnt/lunch.log
-          mka ${{ inputs.build_target }} -j$(nproc --all) 2>&1 | tee /mnt/build.log
+          lunch twrp_X6873-eng 2>&1 | tee $HOME/lunch.log
+          mka ${{ inputs.build_target }} -j$(nproc --all) 2>&1 | tee $HOME/build.log
           echo "rc=${PIPESTATUS[0]}" >> $GITHUB_OUTPUT
           exit 0
 
@@ -129,11 +164,11 @@ jobs:
         run: |
           echo "## Build log tail" >> $GITHUB_STEP_SUMMARY
           echo '```' >> $GITHUB_STEP_SUMMARY
-          tail -n 60 /mnt/build.log >> $GITHUB_STEP_SUMMARY 2>/dev/null || true
+          tail -n 60 $HOME/build.log >> $GITHUB_STEP_SUMMARY 2>/dev/null || true
           echo '```' >> $GITHUB_STEP_SUMMARY
           echo "## Distinct errors" >> $GITHUB_STEP_SUMMARY
           echo '```' >> $GITHUB_STEP_SUMMARY
-          grep -iE "^(FAILED|error:|ninja: error|make: \*\*\*)| error: " /mnt/build.log 2>/dev/null \
+          grep -iE "^(FAILED|error:|ninja: error|make: \*\*\*)| error: " $HOME/build.log 2>/dev/null \
             | sed 's/^[[:space:]]*//' | sort -u | head -n 40 >> $GITHUB_STEP_SUMMARY || true
           echo '```' >> $GITHUB_STEP_SUMMARY
           ls -la /mnt/twrp/out/target/product/X6873/*.img 2>/dev/null || echo "no images produced"
@@ -151,9 +186,9 @@ jobs:
           done
           if [ -z "$RAMDISK" ] && [ -f "$OUT/vendor_boot.img" ]; then
             python3 "$GITHUB_WORKSPACE/device_tree/tools/vendor_boot_surgeon.py" \
-              unpack "$OUT/vendor_boot.img" /mnt/built_frags
-            RAMDISK=$(ls /mnt/built_frags/vendor_ramdisk_*recovery 2>/dev/null | head -1)
-            [ -z "$RAMDISK" ] && RAMDISK=$(ls /mnt/built_frags/vendor_ramdisk_* | head -1)
+              unpack "$OUT/vendor_boot.img" $HOME/built_frags
+            RAMDISK=$(ls $HOME/built_frags/vendor_ramdisk_*recovery 2>/dev/null | head -1)
+            [ -z "$RAMDISK" ] && RAMDISK=$(ls $HOME/built_frags/vendor_ramdisk_* | head -1)
           fi
           if [ -z "$RAMDISK" ]; then
             echo "No recovery ramdisk was produced; nothing to graft." | tee -a $GITHUB_STEP_SUMMARY
@@ -161,30 +196,30 @@ jobs:
           fi
           echo "using recovery ramdisk: $RAMDISK ($(stat -c%s "$RAMDISK") bytes)"
 
-          curl -fsSL --retry 3 -o /mnt/stock_vendor_boot.img "${{ inputs.stock_vendor_boot_url }}"
-          echo "stock image: $(stat -c%s /mnt/stock_vendor_boot.img) bytes"
-          sha256sum /mnt/stock_vendor_boot.img
+          curl -fsSL --retry 3 -o $HOME/stock_vendor_boot.img "${{ inputs.stock_vendor_boot_url }}"
+          echo "stock image: $(stat -c%s $HOME/stock_vendor_boot.img) bytes"
+          sha256sum $HOME/stock_vendor_boot.img
 
           # Refuse to proceed unless the stock image really has the expected
           # PLATFORM + RECOVERY layout.
           python3 "$GITHUB_WORKSPACE/device_tree/tools/vendor_boot_surgeon.py" \
-            selftest /mnt/stock_vendor_boot.img | tee /mnt/selftest.log
+            selftest $HOME/stock_vendor_boot.img | tee $HOME/selftest.log
 
-          mkdir -p /mnt/artifact
+          mkdir -p $HOME/artifact
           python3 "$GITHUB_WORKSPACE/device_tree/tools/vendor_boot_surgeon.py" \
-            graft /mnt/stock_vendor_boot.img "$RAMDISK" \
-            /mnt/artifact/vendor_boot-twrp-X6873.img | tee /mnt/graft.log
+            graft $HOME/stock_vendor_boot.img "$RAMDISK" \
+            $HOME/artifact/vendor_boot-twrp-X6873.img | tee $HOME/graft.log
 
           cp /mnt/twrp/out/target/product/X6873/vendor_boot.img \
-             /mnt/artifact/vendor_boot-RAW-DO-NOT-FLASH.img 2>/dev/null || true
-          cd /mnt/artifact
+             $HOME/artifact/vendor_boot-RAW-DO-NOT-FLASH.img 2>/dev/null || true
+          cd $HOME/artifact
           sha256sum * > SHA256SUMS.txt
           cat SHA256SUMS.txt
 
           {
             echo "## Grafted image"
             echo '```'
-            cat /mnt/graft.log
+            cat $HOME/graft.log
             echo '```'
           } >> $GITHUB_STEP_SUMMARY
 
@@ -194,7 +229,7 @@ jobs:
         with:
           name: X6873-vendor_boot-twrp
           path: |
-            /mnt/artifact/*
+            $HOME/artifact/*
           if-no-files-found: warn
           retention-days: 30
 
@@ -204,9 +239,9 @@ jobs:
         with:
           name: build-logs
           path: |
-            /mnt/build.log
-            /mnt/lunch.log
-            /mnt/graft.log
-            /mnt/selftest.log
+            $HOME/build.log
+            $HOME/lunch.log
+            $HOME/graft.log
+            $HOME/selftest.log
           if-no-files-found: warn
           retention-days: 30
