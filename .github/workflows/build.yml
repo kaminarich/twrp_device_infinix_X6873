@@ -235,25 +235,28 @@ jobs:
             echo '```'
           } >> $GITHUB_STEP_SUMMARY
 
+      # actions/upload-artifact expands neither "~" nor "$HOME" in path
+      # patterns: they are matched literally. Runs #2-#5 uploaded nothing for
+      # exactly that reason. Stage into the workspace and use relative paths.
+      - name: Stage artifacts
+        if: always()
+        run: |
+          mkdir -p upload/logs
+          cp -v $HOME/artifact/* upload/ 2>/dev/null || true
+          for f in build.log lunch.log graft.log selftest.log config-debug.log \
+                   built_vendor_boot_info.log; do
+            cp -v "$HOME/$f" upload/logs/ 2>/dev/null || true
+          done
+          [ -f upload/logs/build.log ] && gzip -f upload/logs/build.log || true
+          echo "--- staged ---"
+          find upload -type f -printf '%p  %s bytes\n' || echo "(nothing staged)"
+        working-directory: ${{ github.workspace }}
+
       - name: Upload artifacts
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: X6873-vendor_boot-twrp
-          path: |
-            $HOME/artifact/*
-          if-no-files-found: warn
-          retention-days: 30
-
-      - name: Upload logs
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: build-logs
-          path: |
-            $HOME/build.log
-            $HOME/lunch.log
-            $HOME/graft.log
-            $HOME/selftest.log
+          path: upload/**
           if-no-files-found: warn
           retention-days: 30

@@ -88,8 +88,13 @@ BOARD_VENDOR_CMDLINE := $(BOARD_KERNEL_CMDLINE)
 # DTB: the stock MT6897 DTB, byte-identical, taken from stock vendor_boot.
 # It carries the MediaTek DT wrapper header (magic 1eabb7d7) the bootloader
 # expects — do not strip it, and do not substitute a DTB from another device.
-TARGET_PREBUILT_DTB := $(DEVICE_PATH)/prebuilt/dtb.img
-BOARD_PREBUILT_DTBIMAGE := $(TARGET_PREBUILT_DTB)
+# BOARD_INCLUDE_DTB_IN_BOOTIMG defines the $(PRODUCT_OUT)/dtb.img target, but
+# only BOARD_PREBUILT_DTBIMAGE_DIR supplies a RULE to build it (core/Makefile
+# concatenates $(BOARD_PREBUILT_DTBIMAGE_DIR)/*.dtb). Setting the former
+# without the latter is what produced run #5's
+#   ninja: 'out/target/product/X6873/dtb.img' ... missing and no known rule
+# BOARD_PREBUILT_DTBIMAGE (singular) is not an AOSP variable at all.
+BOARD_PREBUILT_DTBIMAGE_DIR := $(DEVICE_PATH)/prebuilt/dtb
 BOARD_INCLUDE_DTB_IN_BOOTIMG := true
 
 BOARD_MKBOOTIMG_ARGS += --base $(BOARD_KERNEL_BASE)
@@ -98,7 +103,6 @@ BOARD_MKBOOTIMG_ARGS += --kernel_offset $(BOARD_KERNEL_OFFSET)
 BOARD_MKBOOTIMG_ARGS += --ramdisk_offset $(BOARD_RAMDISK_OFFSET)
 BOARD_MKBOOTIMG_ARGS += --tags_offset $(BOARD_KERNEL_TAGS_OFFSET)
 BOARD_MKBOOTIMG_ARGS += --dtb_offset $(BOARD_DTB_OFFSET)
-BOARD_MKBOOTIMG_ARGS += --dtb $(TARGET_PREBUILT_DTB)
 BOARD_MKBOOTIMG_ARGS += --header_version $(BOARD_BOOT_HEADER_VERSION)
 BOARD_MKBOOTIMG_ARGS += --board ""
 BOARD_MKBOOTIMG_ARGS += --vendor_cmdline $(BOARD_VENDOR_CMDLINE)
