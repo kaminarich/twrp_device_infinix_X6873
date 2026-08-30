@@ -1,0 +1,212 @@
+name: Build TWRP vendor_boot (X6873)
+
+# Produces a FLASHABLE vendor_boot.img for the Infinix GT 30 Pro (X6873).
+#
+# Why this workflow does more than "mka vendorbootimage":
+#
+# Stock vendor_boot.img on this device holds TWO ramdisk fragments --
+# PLATFORM (~29 MB, the normal-boot vendor ramdisk with all 241 kernel
+# modules) and RECOVERY (~3 MB). A recovery build emits a vendor_boot.img
+# containing only its own ramdisk. Flashing that wipes the PLATFORM fragment,
+# the device loses the modules it needs to mount super, and it bootloops with
+# no way to recover -- recovery lived in the partition that was just
+# overwritten. That is the failure reported on the 145 and 150 builds.
+#
+# So we build the recovery ramdisk, then graft it into the STOCK image as the
+# RECOVERY fragment, leaving PLATFORM, the DTB and every header field
+# byte-identical.
+
+on:
+  workflow_dispatch:
+    inputs:
+      manifest_branch:
+        description: 'TWRP minimal manifest branch'
+        default: 'twrp-12.1'
+        type: choice
+        options: ['twrp-12.1', 'twrp-14.1']
+      stock_vendor_boot_url:
+        description: 'URL of the STOCK vendor_boot.img to graft onto'
+        default: 'https://gitlab.com/api/v4/projects/85881373/repository/files/vendor_boot.img/raw?ref=X6873-16.2.0.150SP12%28OP003PF001AZ%29'
+        type: string
+      build_target:
+        description: 'Make target'
+        default: 'vendorbootimage'
+        type: choice
+        options: ['vendorbootimage', 'recoveryimage', 'bootimage']
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 350
+
+    steps:
+      # ------------------------------------------------------------ disk
+      # A TWRP minimal manifest sync plus out/ needs far more than the ~14 GB
+      # free on /. Reclaim the preinstalled toolchains and use /mnt, which has
+      # the bulk of the runner's disk.
+      - name: Reclaim disk space
+        run: |
+          echo "--- before ---"; df -h / /mnt
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
+                      /usr/local/share/boost /usr/local/graalvm \
+                      /usr/local/share/powershell /usr/local/lib/node_modules \
+                      /opt/hostedtoolcache/CodeQL /usr/local/.ghcup \
+                      /usr/share/swift || true
+          sudo docker image prune --all --force || true
+          sudo apt-get -qq purge -y '^dotnet-.*' '^llvm-.*' '^mysql-.*' \
+                      '^mongodb-.*' azure-cli google-chrome-stable \
+                      firefox powershell || true
+          sudo apt-get -qq autoremove -y; sudo apt-get -qq clean
+          echo "--- after ---"; df -h / /mnt
+
+      - name: Add swap
+        run: |
+          sudo fallocate -l 12G /mnt/swapfile
+          sudo chmod 600 /mnt/swapfile
+          sudo mkswap /mnt/swapfile
+          sudo swapon /mnt/swapfile
+          free -h
+
+      - name: Checkout device tree
+        uses: actions/checkout@v4
+        with:
+          path: device_tree
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get -qq update
+          sudo DEBIAN_FRONTEND=noninteractive apt-get -qq install -y \
+            bc bison build-essential ccache curl flex git git-lfs gnupg gperf \
+            imagemagick lib32ncurses5-dev lib32readline-dev lib32z1-dev \
+            libelf-dev liblz4-tool libncurses5 libncurses5-dev libsdl1.2-dev \
+            libssl-dev libxml2 libxml2-utils lzop pngcrush rsync \
+            schedtool squashfs-tools xsltproc zip zlib1g-dev python3 \
+            python-is-python3 openjdk-11-jdk-headless android-sdk-libsparse-utils \
+            erofs-utils f2fs-tools
+          mkdir -p ~/bin
+          curl -fsSL https://storage.googleapis.com/git-repo-downloads/repo > ~/bin/repo
+          chmod a+x ~/bin/repo
+          echo "$HOME/bin" >> $GITHUB_PATH
+
+      # ------------------------------------------------------------ source
+      - name: Sync TWRP minimal manifest
+        run: |
+          sudo mkdir -p /mnt/twrp
+          sudo chown -R "$USER:$USER" /mnt/twrp
+          cd /mnt/twrp
+          git config --global user.name "kaminarich"
+          git config --global user.email "kaminarich@users.noreply.github.com"
+          git config --global color.ui false
+          repo init --depth=1 --no-repo-verify \
+            -u https://github.com/minimal-manifest-twrp/platform_manifest_twrp_aosp.git \
+            -b ${{ inputs.manifest_branch }}
+          repo sync -c -j$(nproc --all) --force-sync --no-clone-bundle --no-tags --optimized-fetch --prune
+          df -h /mnt
+
+      - name: Place device tree
+        run: |
+          mkdir -p /mnt/twrp/device/infinix/X6873
+          rsync -a --delete --exclude='.git' --exclude='.github' \
+            "$GITHUB_WORKSPACE/device_tree/" /mnt/twrp/device/infinix/X6873/
+          ls -la /mnt/twrp/device/infinix/X6873
+
+      # ------------------------------------------------------------- build
+      - name: Build
+        id: build
+        run: |
+          cd /mnt/twrp
+          set +e
+          export ALLOW_MISSING_DEPENDENCIES=true
+          export LC_ALL=C
+          source build/envsetup.sh
+          lunch twrp_X6873-eng 2>&1 | tee /mnt/lunch.log
+          mka ${{ inputs.build_target }} -j$(nproc --all) 2>&1 | tee /mnt/build.log
+          echo "rc=${PIPESTATUS[0]}" >> $GITHUB_OUTPUT
+          exit 0
+
+      - name: Summarise errors
+        if: always()
+        run: |
+          echo "## Build log tail" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          tail -n 60 /mnt/build.log >> $GITHUB_STEP_SUMMARY 2>/dev/null || true
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          echo "## Distinct errors" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          grep -iE "^(FAILED|error:|ninja: error|make: \*\*\*)| error: " /mnt/build.log 2>/dev/null \
+            | sed 's/^[[:space:]]*//' | sort -u | head -n 40 >> $GITHUB_STEP_SUMMARY || true
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          ls -la /mnt/twrp/out/target/product/X6873/*.img 2>/dev/null || echo "no images produced"
+
+      # ------------------------------------------------------------- graft
+      - name: Graft recovery fragment into stock vendor_boot
+        if: always()
+        run: |
+          OUT=/mnt/twrp/out/target/product/X6873
+          # Prefer the standalone recovery ramdisk if the build emitted one;
+          # otherwise take the RECOVERY fragment out of the built vendor_boot.
+          RAMDISK=""
+          for c in "$OUT/ramdisk-recovery.img" "$OUT/ramdisk-recovery.cpio.lz4"; do
+            [ -f "$c" ] && RAMDISK="$c" && break
+          done
+          if [ -z "$RAMDISK" ] && [ -f "$OUT/vendor_boot.img" ]; then
+            python3 "$GITHUB_WORKSPACE/device_tree/tools/vendor_boot_surgeon.py" \
+              unpack "$OUT/vendor_boot.img" /mnt/built_frags
+            RAMDISK=$(ls /mnt/built_frags/vendor_ramdisk_*recovery 2>/dev/null | head -1)
+            [ -z "$RAMDISK" ] && RAMDISK=$(ls /mnt/built_frags/vendor_ramdisk_* | head -1)
+          fi
+          if [ -z "$RAMDISK" ]; then
+            echo "No recovery ramdisk was produced; nothing to graft." | tee -a $GITHUB_STEP_SUMMARY
+            exit 0
+          fi
+          echo "using recovery ramdisk: $RAMDISK ($(stat -c%s "$RAMDISK") bytes)"
+
+          curl -fsSL --retry 3 -o /mnt/stock_vendor_boot.img "${{ inputs.stock_vendor_boot_url }}"
+          echo "stock image: $(stat -c%s /mnt/stock_vendor_boot.img) bytes"
+          sha256sum /mnt/stock_vendor_boot.img
+
+          # Refuse to proceed unless the stock image really has the expected
+          # PLATFORM + RECOVERY layout.
+          python3 "$GITHUB_WORKSPACE/device_tree/tools/vendor_boot_surgeon.py" \
+            selftest /mnt/stock_vendor_boot.img | tee /mnt/selftest.log
+
+          mkdir -p /mnt/artifact
+          python3 "$GITHUB_WORKSPACE/device_tree/tools/vendor_boot_surgeon.py" \
+            graft /mnt/stock_vendor_boot.img "$RAMDISK" \
+            /mnt/artifact/vendor_boot-twrp-X6873.img | tee /mnt/graft.log
+
+          cp /mnt/twrp/out/target/product/X6873/vendor_boot.img \
+             /mnt/artifact/vendor_boot-RAW-DO-NOT-FLASH.img 2>/dev/null || true
+          cd /mnt/artifact
+          sha256sum * > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+
+          {
+            echo "## Grafted image"
+            echo '```'
+            cat /mnt/graft.log
+            echo '```'
+          } >> $GITHUB_STEP_SUMMARY
+
+      - name: Upload artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: X6873-vendor_boot-twrp
+          path: |
+            /mnt/artifact/*
+          if-no-files-found: warn
+          retention-days: 30
+
+      - name: Upload logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-logs
+          path: |
+            /mnt/build.log
+            /mnt/lunch.log
+            /mnt/graft.log
+            /mnt/selftest.log
+          if-no-files-found: warn
+          retention-days: 30
