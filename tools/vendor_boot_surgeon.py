@@ -249,7 +249,26 @@ def cmd_unpack(argv):
 
 
 def cmd_graft(argv):
-    stock, new_recovery, dest = argv[0], argv[1], argv[2]
+    # optional flags
+    pad = True
+    partition_size = None
+    args = []
+    i = 0
+    while i < len(argv):
+        a = argv[i]
+        if a == '--no-pad':
+            pad = False
+        elif a == '--partition-size':
+            i += 1
+            partition_size = int(argv[i], 0)
+        else:
+            args.append(a)
+        i += 1
+    if len(args) < 3:
+        print('usage: graft [--no-pad] [--partition-size N] STOCK NEW_RAMDISK OUT',
+              file=sys.stderr)
+        return 1
+    stock, new_recovery, dest = args[0], args[1], args[2]
     vb = VendorBoot(read(stock))
     new = read(new_recovery)
 
@@ -280,6 +299,7 @@ def cmd_graft(argv):
     img = vb.build(vb.fragments)
 
     # The partition is 64 MiB. Refuse to emit something that cannot be flashed.
+    # Checked before padding, so an oversized payload is caught on its own merit.
     limit = 67108864
     if len(img) > limit:
         print('ERROR: result is %d bytes, larger than the %d byte vendor_boot '
@@ -287,6 +307,30 @@ def cmd_graft(argv):
         print('Shrink the recovery ramdisk (TW_EXCLUDE_* options) and retry.',
               file=sys.stderr)
         return 3
+
+    # ---- pad to the full partition size -----------------------------------
+    # Stock vendor_boot.img as dumped is exactly the partition size (64 MiB):
+    # a raw partition read, zero padded, with a 64-byte AVB footer in the last
+    # block. Device trees that set BOARD_AVB_ENABLE := true get the same result
+    # from "avbtool add_hash_footer --partition_size", which pads the file out
+    # to that size. That is the only reason other devices' recovery images are
+    # exactly 64 MiB -- it is padding, not content.
+    #
+    # Padding matters for a real reason, not cosmetics: fastboot writes only as
+    # many bytes as the image contains, so flashing a short image leaves the
+    # tail of the previous partition content in place -- including the stock
+    # AVB footer and its vbmeta block. Padding guarantees the whole partition
+    # is overwritten and no stale metadata survives.
+    if pad:
+        target = partition_size if partition_size else len(read(stock))
+        if target < len(img):
+            print('ERROR: padding target %d is smaller than the image (%d).'
+                  % (target, len(img)), file=sys.stderr)
+            return 3
+        pad_bytes = target - len(img)
+        img = img + b'\x00' * pad_bytes
+        print('padded  %d -> %d bytes (+%d zero bytes) to match the partition'
+              % (target - pad_bytes, target, pad_bytes))
 
     with open(dest, 'wb') as f:
         f.write(img)
@@ -319,10 +363,15 @@ def cmd_graft(argv):
     print()
     print('wrote %s (%d bytes, %.1f%% of the 64 MiB partition)'
           % (dest, len(img), 100.0 * len(img) / limit))
-    print('NOTE: no AVB footer is added. The stock image carries one, but this')
-    print('      image is meant to be fastboot-flashed to an unlocked device,')
-    print('      where vendor_boot is not verified. Do not re-lock the')
-    print('      bootloader while a grafted vendor_boot is installed.')
+    print()
+    print('AVB: no footer is written, deliberately. The stock root vbmeta.img')
+    print('     carries a DIRECT HASH descriptor for vendor_boot')
+    print('     (image_size + sha256 digest), so libavb hashes the partition')
+    print('     itself and never consults a footer. Any modification therefore')
+    print('     fails verification regardless of what footer is present, which')
+    print('     is why this device needs:')
+    print('       fastboot --disable-verity --disable-verification flash vbmeta vbmeta.img')
+    print('     Do not re-lock the bootloader while this image is installed.')
     print('VERIFIED: PLATFORM fragment, DTB and all header fields are unchanged.')
     return 0
 

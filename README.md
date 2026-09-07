@@ -159,6 +159,54 @@ fastboot flash vendor_boot vendor_boot-twrp-X6873.img
 fastboot reboot recovery
 ```
 
+### Why this device needs vbmeta verification disabled
+
+Some Infinix/Tecno devices accept a modified `vendor_boot` without touching
+vbmeta; this one does not, and that is not a guess. Parsing the stock
+`vbmeta.img` (12288 bytes, libavb 1.0, `SHA256_RSA2048`, `rollback_index=5`,
+header `flags=0` meaning verification enabled) gives:
+
+```
+[1]  CHAIN partition="boot"           rollback_index_location=3
+[2]  CHAIN partition="vbmeta_system"  rollback_index_location=2
+[3]  CHAIN partition="vbmeta_vendor"  rollback_index_location=4
+[41] HASH  partition="dtbo"        image_size=233824
+[42] HASH  partition="init_boot"   image_size=3121152
+[43] HASH  partition="vendor_boot" image_size=32489472  sha256  digest=faa2eef6...
+```
+
+`vendor_boot` has a **direct HASH descriptor in the root vbmeta**. libavb hashes
+the partition contents and compares against that digest, so any modification
+fails — and the footer inside the partition is irrelevant, which is why adding
+an AVB footer to a custom image does not help. Devices that boot custom
+recovery without touching vbmeta are ones whose vendor_boot has no descriptor,
+or whose bootloader skips AVB entirely when unlocked.
+
+So the required sequence is:
+
+```bash
+fastboot --disable-verity --disable-verification flash vbmeta vbmeta.img
+fastboot flash vendor_boot vendor_boot-twrp-X6873.img
+fastboot reboot recovery
+```
+
+Use the `vbmeta.img` from firmware matching your installed build. Flashing
+vbmeta with those flags only clears the verification flags; it does **not**
+change the rollback index, so it is reversible by reflashing stock vbmeta.
+
+### Why the image is exactly 64 MiB
+
+The grafted image is padded to the full 67108864-byte partition size. Other
+devices' recovery images are 64 MiB because they set `BOARD_AVB_ENABLE := true`,
+and `avbtool add_hash_footer --partition_size` pads the output to that size —
+the size comes from padding, not content.
+
+This matters beyond cosmetics: `fastboot` writes only as many bytes as the image
+contains. A short image would leave the tail of the previous partition in place,
+including the **stock AVB footer and its vbmeta block**, so the partition would
+end up carrying stale verification metadata. Padding guarantees the whole
+partition is overwritten.
+
 To restore stock:
 
 ```bash
