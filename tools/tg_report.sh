@@ -12,6 +12,31 @@ set -u
 API="https://api.telegram.org/bot${TG_BOT}"
 OUT=/mnt/twrp/out/target/product/X6873
 
+# ---------------------------------------------------------------- preflight
+# A bot can only post to a chat it belongs to. Verify before doing work, and
+# never fail the build over a chat misconfiguration -- the image is already
+# uploaded and archived by the time this runs.
+PRE=$(curl -sS --max-time 30 "${API}/getChat?chat_id=${TG_CHAT}" 2>/dev/null)
+if ! printf '%s' "$PRE" | python3 -c 'import json,sys; sys.exit(0 if json.load(sys.stdin).get("ok") else 1)' 2>/dev/null; then
+  DESC=$(printf '%s' "$PRE" | python3 -c 'import json,sys
+try: print(json.load(sys.stdin).get("description","unparseable response"))
+except Exception: print("unparseable response")' 2>/dev/null)
+  BOT=$(curl -sS --max-time 30 "${API}/getMe" 2>/dev/null | python3 -c 'import json,sys
+try:
+    d=json.load(sys.stdin)
+    print("@"+d["result"]["username"] if d.get("ok") else "INVALID TOKEN")
+except Exception: print("unknown")' 2>/dev/null)
+  echo "::warning::Telegram not reachable: ${DESC}"
+  echo "Bot identity: ${BOT}"
+  echo "chat_id used: ${TG_CHAT}"
+  echo
+  echo "Most likely cause: the bot is not a member of that chat."
+  echo "Fix: add ${BOT} to the group (or make it an admin if it is a channel),"
+  echo "then send one message there and re-run. The build artifacts and the"
+  echo "pixeldrain link are unaffected."
+  exit 0
+fi
+
 tg_send() { # $1 = text
   curl -fsS --retry 3 --max-time 60 \
     -H "Content-Type: application/json" \
@@ -31,6 +56,14 @@ tg_doc() { # $1 = file, $2 = caption
 RUN_URL="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
 SHA="${GITHUB_SHA:0:9}"
 GRAFTED="$HOME/artifact/vendor_boot-twrp-X6873.img"
+
+# pixeldrain links are exported by tools/pixeldrain_upload.sh via GITHUB_ENV
+if [ "${PD_STATUS:-}" = "ok" ]; then
+  PD_LINE="${PD_VIEW}
+<b>Direct:</b> ${PD_DIRECT}"
+else
+  PD_LINE="<i>pixeldrain upload unavailable — use the run artifacts</i>"
+fi
 
 
 if [ -f "$HOME/build.log" ]; then
@@ -58,18 +91,28 @@ if [ -f "$GRAFTED" ]; then
 <b>Graft verification:</b>
 ${GRAFT_SUMMARY:-<i>see workflow summary</i>}
 
-<b>Flash (unlocked bootloader only):</b>
-<code>fastboot flash vendor_boot vendor_boot-twrp-X6873.img</code>
-Then <code>fastboot reboot recovery</code>. Never flash the RAW image.
+<b>Download:</b> ${PD_LINE}
+
+<b>Flash — this device REQUIRES vbmeta verification off.</b>
+Its stock root vbmeta.img has a direct HASH descriptor for vendor_boot
+(image_size=32489472, sha256), so libavb hashes the partition itself and any
+change fails verification.
+<code>fastboot --disable-verity --disable-verification flash vbmeta vbmeta.img</code>
+<code>fastboot flash vendor_boot ${PD_NAME:-vendor_boot-twrp-X6873.img}</code>
+<code>fastboot reboot recovery</code>
+Never flash the RAW image. Do not re-lock the bootloader.
 <b>Run:</b> ${RUN_URL}"
 
   tg_send "$REPORT"
-  # Telegram caps documents at 50 MB; the grafted image is ~34 MB.
-  if [ "$IMG_SIZE" -lt 50000000 ]; then
+  # Telegram caps bot documents at 50 MB. The padded image is 64 MiB, so it is
+  # delivered via pixeldrain instead of being attached.
+  if [ "$IMG_SIZE" -lt 49000000 ]; then
     tg_doc "$GRAFTED" "TWRP vendor_boot for X6873 — flash to vendor_boot only. Commit ${SHA}"
   else
-    tg_send "⚠️ Image exceeds Telegram's 50 MB limit; download it from the run artifacts: ${RUN_URL}"
+    tg_send "ℹ️ The image is $(( IMG_SIZE / 1024 / 1024 )) MB, above Telegram's 50 MB bot limit, so it is not attached. Use the pixeldrain link above (resumable) or the run artifacts."
   fi
+  # Always attach the small logs so failures are diagnosable from the chat.
+  [ -f "$HOME/graft.log" ] && tg_doc "$HOME/graft.log" "graft verification — run ${GITHUB_RUN_NUMBER}"
 else
   REPORT="❌ <b>TWRP vendor_boot build FAILED</b>
 <b>Device:</b> Infinix GT 30 Pro (X6873)

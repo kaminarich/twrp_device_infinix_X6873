@@ -273,6 +273,17 @@ jobs:
           if-no-files-found: warn
           retention-days: 30
 
+      # --------------------------------------------------------- pixeldrain
+      # Uploads ONLY the grafted recovery image, from the runner, so nothing
+      # large crosses the maintainer's slow connection. Gives a direct,
+      # resumable download link -- better than the artifact zip, which must be
+      # fetched whole.
+      - name: Upload image to pixeldrain
+        if: always()
+        env:
+          PIXELDRAIN_KEY: ${{ secrets.PIXELDRAIN_KEY }}
+        run: bash "$GITHUB_WORKSPACE/device_tree/tools/pixeldrain_upload.sh"
+
       # ------------------------------------------------------------ telegram
       # Sends the build report to Telegram. Uses repository variables TG_BOT
       # (bot token) and TG_CHAT (chat id) — both optional; the step is skipped
@@ -280,6 +291,7 @@ jobs:
       # never appears in a URL that gets logged.
       - name: Report to Telegram
         if: always()
+        continue-on-error: true
         env:
           TG_BOT: ${{ secrets.TG_BOT || vars.TG_BOT }}
           TG_CHAT: ${{ secrets.TG_CHAT || vars.TG_CHAT }}
