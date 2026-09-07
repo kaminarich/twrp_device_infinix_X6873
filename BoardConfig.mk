@@ -291,15 +291,30 @@ BOARD_VENDOR_RAMDISK_KERNEL_MODULES := \
 # TWRP module loading.
 #
 # TW_LOAD_VENDOR_BOOT_MODULES is NESTED inside "ifneq ($(TW_LOAD_VENDOR_MODULES),)"
-# in bootable/recovery/Android.mk:323-334. Setting it alone is DEAD CONFIG:
-# without TW_LOAD_VENDOR_MODULES, kernel_module_loader.cpp is not even compiled
-# into recovery, so TWRP loads no modules at all and the touchscreen stays dead
-# no matter how many modules the ramdisk carries.
+# in bootable/recovery/Android.mk:323-334, so setting it alone compiles no
+# module loader into TWRP.
 #
-# TW_LOAD_VENDOR_MODULES is a quoted list of module filenames TWRP insmods
-# itself. The display stack comes up from the stock PLATFORM fragment's
-# modules.load.recovery, so what TWRP must load here are the four modules added
-# from stock odm_dlkm for input and haptics.
+# CORRECTION to an earlier claim in this tree's history: that does NOT mean no
+# modules get loaded. First-stage init loads the vendor ramdisk modules from
+# /lib/modules according to modules.load / modules.load.recovery, which is the
+# primary mechanism and is independent of TWRP. Cross-checked against
+# jvaswb/twrp-device_infinix_X6882 and Novicio-2309/twrp-android_device_tecno_LG7n:
+# both ship their modules in recovery/root/lib/modules with a modules.load and
+# set no TW_LOAD_VENDOR_MODULES at all.
+#
+# TWRP's own loader is therefore supplementary. It is enabled here as belt and
+# braces for the four modules added from stock odm_dlkm, which are also present
+# in modules.load.recovery; a second insmod attempt just returns EEXIST.
+#
+# Touch firmware is deliberately NOT shipped. Our driver is the flash-resident
+# SPI variant (focaltech_ft3683g.ko, built from .../focaltech/ft3683g_spi/), and
+# its firmware requests exist only for FW upgrade and factory-test INI paths
+# (fts_get_fw_file_via_request_firmware, fts_test_get_ini_via_request_firmware).
+# X6882 ships odm/firmware blobs because its driver is
+# focaltech_noflash_common.ko, which must upload firmware on every boot. Placing
+# a firmware file where a flash-resident FTS driver can find it risks an
+# auto-upgrade on probe, and flashing touch firmware from recovery can brick the
+# digitizer.
 TW_LOAD_VENDOR_MODULES := "focaltech_ft3683g.ko adaptive-ts.ko haptic_drv_hv.ko aw86224_light.ko"
 TW_LOAD_VENDOR_BOOT_MODULES := true
 
