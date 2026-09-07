@@ -295,6 +295,22 @@ def cmd_graft(argv):
               % (f['type_name'], f['size'], sha(f['data'])[:16]))
     print('preserved DTB           : %d bytes  %s' % (len(vb.dtb), sha(vb.dtb)[:16]))
 
+    # ---- safety gate: a recovery fragment with no touch driver ------------
+    # The graft replaces the PLATFORM fragment with stock, so any module the
+    # build placed in PLATFORM is discarded. If the incoming recovery fragment
+    # carries no touch driver, the resulting recovery would boot with a working
+    # display and a dead touchscreen. On a device with no button combo to reach
+    # fastboot, that is a serious operational hazard, so warn loudly.
+    lower = new[:4 * 1024 * 1024]
+    hints = (b'focaltech', b'adaptive-ts', b'goodix', b'himax', b'novatek')
+    if not any(h in new for h in hints):
+        print()
+        print('WARNING: the new recovery ramdisk contains no recognisable touch')
+        print('         driver. Recovery may boot with a dead touchscreen.')
+        print('         Stage the modules into recovery/root/lib/modules/ so')
+        print('         they land in the RECOVERY fragment (see BoardConfig.mk).')
+        print()
+
     tgt['data'] = new
     img = vb.build(vb.fragments)
 

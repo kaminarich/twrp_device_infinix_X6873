@@ -276,17 +276,23 @@ TW_EXCLUDE_APEX := true
 # transsion-graveyard's Tecno CM6 tree.
 KERNEL_PATH := $(DEVICE_PATH)-kernel
 
-BOARD_VENDOR_RAMDISK_KERNEL_MODULES_LOAD := \
-    $(strip $(shell cat $(KERNEL_PATH)/modules/vendor_ramdisk.modules.load))
-BOARD_VENDOR_RAMDISK_KERNEL_MODULES := \
-    $(addprefix $(KERNEL_PATH)/modules/,$(BOARD_VENDOR_RAMDISK_KERNEL_MODULES_LOAD))
-
-BOARD_VENDOR_RAMDISK_RECOVERY_KERNEL_MODULES_LOAD := \
-    $(strip $(shell cat $(KERNEL_PATH)/modules/vendor_ramdisk.modules.load.recovery))
-RECOVERY_KERNEL_MODULES := \
-    $(addprefix $(KERNEL_PATH)/modules/,$(BOARD_VENDOR_RAMDISK_RECOVERY_KERNEL_MODULES_LOAD))
-BOARD_VENDOR_RAMDISK_KERNEL_MODULES := \
-    $(sort $(BOARD_VENDOR_RAMDISK_KERNEL_MODULES) $(RECOVERY_KERNEL_MODULES))
+# BOARD_VENDOR_RAMDISK_KERNEL_MODULES is deliberately NOT used.
+#
+# It installs modules into the PLATFORM ramdisk fragment -- which is exactly the
+# fragment the graft REPLACES with the device's own stock fragment. Modules put
+# there are therefore discarded, and the flashable image ends up with no touch
+# driver. Verified on the real artifact: the r10 image's RECOVERY fragment
+# contained 0 .ko files.
+#
+# It would also not fit: 28 MB of modules in PLATFORM plus 28 MB in RECOVERY
+# plus TWRP exceeds the 64 MiB partition.
+#
+# Instead the modules are staged into $(DEVICE_PATH)/recovery/root/lib/modules/
+# by the workflow. The recovery packaging rule copies that tree verbatim:
+#     cp -rf device/infinix/X6873/recovery/root out/target/product/X6873/recovery/
+# (observed in the build log), so they land in the RECOVERY fragment and survive
+# the graft. This is the same layout idabgsram's working X6873 tree uses, and
+# jvaswb's X6882 tree, both of which ship 245 and 213 modules that way.
 
 # TWRP module loading.
 #

@@ -127,6 +127,23 @@ jobs:
       # though BoardConfig.mk sets TW_THEME. TWRP forwards TW_* into the soong
       # namespace twrpVarsPlugin via vendor/twrp/config/BoardConfigSoong.mk,
       # so prove whether kati sees the variable at all.
+      # Stage the stock modules into the RECOVERY fragment. They must be here,
+      # not in BOARD_VENDOR_RAMDISK_KERNEL_MODULES -- see BoardConfig.mk.
+      - name: Stage kernel modules into recovery ramdisk
+        run: |
+          KSRC=/mnt/twrp/device/infinix/X6873-kernel/modules
+          DEST=/mnt/twrp/device/infinix/X6873/recovery/root/lib/modules
+          mkdir -p "$DEST"
+          cp -v "$KSRC"/*.ko "$DEST"/ | tail -2
+          cp -v "$KSRC"/modules.dep "$KSRC"/modules.alias "$KSRC"/modules.softdep "$DEST"/ 2>/dev/null || true
+          cp -v "$KSRC"/vendor_ramdisk.modules.load "$DEST"/modules.load
+          # Load list = stock recovery order, with the four odm_dlkm additions
+          # appended in the order idabgsram's working tree uses.
+          cp "$KSRC"/vendor_ramdisk.modules.load.recovery "$DEST"/modules.load.recovery
+          echo "modules staged : $(ls "$DEST"/*.ko | wc -l)"
+          echo "load.recovery  : $(wc -l < "$DEST"/modules.load.recovery) entries"
+          tail -5 "$DEST"/modules.load.recovery
+
       - name: Diagnose device config
         run: |
           cd /mnt/twrp
